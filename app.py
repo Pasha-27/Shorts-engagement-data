@@ -361,6 +361,11 @@ if fetch_button:
                     avg_eng = sum(eng_rates) / len(eng_rates) if eng_rates else 0.0
                     st.markdown(f"## **Average Engagement Rate: {avg_eng:.2f}%**")
 
+                    # Calculate and display average views
+                    view_counts = [int(item["Views"].replace(",", "")) for item in videos_data]
+                    avg_views = sum(view_counts) / len(view_counts) if view_counts else 0.0
+                    st.markdown(f"## **Average Views: {avg_views:,.0f}**")
+
                     # Convert DataFrame to HTML with clickable links and display
                     html_table = df.to_html(escape=False, index=False, classes="clickable-table")
                     st.write(html_table, unsafe_allow_html=True)
