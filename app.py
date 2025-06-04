@@ -9,7 +9,6 @@ from urllib.parse import urlparse, parse_qs
 st.set_page_config(
     page_title="YouTube Channel: Recent Shorts",
     layout="wide",
-    initial_sidebar_state="expanded"
 )
 
 # Inject custom CSS for dark, modern styling
@@ -21,58 +20,65 @@ st.markdown(
         background-color: #0f1115;
         color: #e0e0e0;
     }
-    /* Sidebar background */
-    .stSidebar {
-        background-color: #121416;
-        color: #e0e0e0;
-    }
-    /* Sidebar inputs styling */
-    .stSidebar input, .stSidebar button {
+    /* Input containers (text_input, button) */
+    .stTextInput, .stButton {
         background-color: #1e2228;
         color: #e0e0e0;
         border: 1px solid #333740;
         border-radius: 5px;
     }
-    /* Video card container */
-    .video-card {
-        background-color: #1e2228;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    /* Table styling */
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
     }
-    /* Headers inside video cards */
-    .video-card h3 {
-        margin-bottom: 10px;
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+    .dataframe thead th {
+        text-align: left;
+    }
+    /* Markdown table styling */
+    .markdown-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .markdown-table th,
+    .markdown-table td {
+        border: 1px solid #333740;
+        padding: 8px;
+    }
+    .markdown-table th {
+        background-color: #1e2228;
         color: #ffffff;
     }
-    /* Metrics labels */
-    .stMetric-label {
-        color: #ccd6f6;
+    .markdown-table td {
+        background-color: #1b1f23;
+        color: #e0e0e0;
     }
-    /* Metrics values */
-    .stMetric-value {
-        color: #00f2c3;
+    .markdown-table a {
+        color: #1e90ff;
+        text-decoration: none;
     }
-    /* Thumbnail images */
-    .video-thumb {
-        border-radius: 8px;
-    }
-    /* Expander styling */
-    .stExpanderHeader {
-        background-color: #1e2228 !important;
-        color: #ffffff !important;
-        border-radius: 8px;
-        padding: 10px;
-    }
-    .stExpanderContent {
-        background-color: #1b1f23 !important;
-        padding: 10px;
-        border-radius: 0 0 8px 8px;
+    .markdown-table a:hover {
+        text-decoration: underline;
     }
     </style>
     """,
     unsafe_allow_html=True
+)
+
+st.title("🎬 YouTube Channel: Recent Shorts (< 2 Minutes)")
+st.write(
+    """
+    Enter a **YouTube Channel URL**, **Channel ID**, or **Username** on the right, then click **Fetch**.  
+    The app will return up to 40 of the most recent videos under 2 minutes, displayed in a table with:
+    - Video Title (clickable)  
+    - Views  
+    - Likes  
+    - Comments  
+    - Engagement Rate (Likes + Comments) / Views  
+    - Link to Video  
+    """
 )
 
 # --------------------------------------------------
@@ -82,10 +88,10 @@ st.markdown(
 def extract_channel_identifier(url_or_id: str):
     """
     Given a channel URL or raw identifier, determine:
-      - "id"       → Literal channel ID (starts with "UC✔")
+      - "id"       → Literal channel ID (starts with "UC")
       - "username" → YouTube username (for /user/…)
       - "custom"   → Custom URL handle (for /c/…)
-      - "raw"      → Neither; treat as possible username/custom (will attempt search)
+      - "raw"      → Neither; will attempt search
     Returns (mode, identifier).
     """
     url_or_id = url_or_id.strip()
@@ -154,11 +160,9 @@ def resolve_channel_id(api_key: str, mode: str, identifier: str) -> str:
             items = r.json().get("items", [])
             if items:
                 return items[0]["id"]
-        # Fall back to custom search if username not found
-        mode = "custom"
+        mode = "custom"  # Fall back to search
 
     if mode in ("custom", "raw"):
-        # Try searching for a channel whose title or custom handle matches identifier
         url = f"{base}/search?part=snippet&type=channel&q={identifier}&maxResults=1&key={api_key}"
         r = requests.get(url)
         if r.status_code == 200:
@@ -190,7 +194,7 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
     Paginate through the uploads playlist, fetch video details in batches, filter
     by duration < 120 seconds, until we collect up to max_results videos.
     Returns a list of dicts:
-      { videoId, title, thumbnail_url, viewCount, likeCount, commentCount, engagementRate }
+      { videoId, title, viewCount, likeCount, commentCount, engagementRate }
     """
     collected = []
     playlist_url = "https://www.googleapis.com/youtube/v3/playlistItems"
@@ -245,18 +249,9 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
                 if view_count > 0:
                     engagement_rate = (like_count + comment_count) / view_count * 100
 
-                thumbs = snippet.get("thumbnails", {})
-                thumb_url = (
-                    thumbs.get("high", {}).get("url")
-                    or thumbs.get("medium", {}).get("url")
-                    or thumbs.get("default", {}).get("url")
-                    or ""
-                )
-
                 collected.append({
                     "videoId": vid["id"],
                     "title": snippet.get("title", "—"),
-                    "thumbnail_url": thumb_url,
                     "viewCount": view_count,
                     "likeCount": like_count,
                     "commentCount": comment_count,
@@ -271,61 +266,49 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
 
 
 # --------------------------------------------------
-# 3. Sidebar: Inputs & Fetch Button
+# 3. Input: Channel URL Field & Fetch Button (Top-Right)
 # --------------------------------------------------
-st.sidebar.title("🔍 Channel Inputs")
-st.sidebar.markdown(
-    """
-    Enter a **YouTube Channel URL** (or Channel ID or Username).  
-    The app will fetch up to 40 of the most recent videos **under 2 minutes**,
-    then display:
-    - Title  
-    - Thumbnail  
-    - View count  
-    - Like count  
-    - Comment count  
-    - Engagement rate (Likes + Comments) / Views  
-    """
-)
+# Create two columns: left blank, right contains inputs
+col_left, col_right = st.columns([3, 1])
 
-# Attempt to retrieve API key securely from secrets
+with col_right:
+    channel_input = st.text_input(
+        label="Channel URL / ID / Username",
+        placeholder="e.g. https://www.youtube.com/c/ChannelName"
+    )
+    fetch_button = st.button("Fetch Videos")
+
+# Retrieve API key from Streamlit secrets
 try:
     api_key = st.secrets["youtube_api_key"].strip()
-except Exception:
+except KeyError:
     api_key = None
 
 if not api_key:
-    st.sidebar.error("🔒 Add `youtube_api_key` to Streamlit secrets.")
+    st.error("🔒 Add `youtube_api_key` to Streamlit secrets and rerun.")
     st.stop()
 
-channel_input = st.sidebar.text_input("Channel URL or ID/Username")
-
-fetch_button = st.sidebar.button("Fetch Recent <2 Min Videos", use_container_width=True)
-
 # --------------------------------------------------
-# 4. Main: Fetch & Display Video Cards
+# 4. On Fetch: Resolve + Fetch + Display Table
 # --------------------------------------------------
 if fetch_button:
     if not channel_input.strip():
-        st.sidebar.error("Please enter a channel URL or identifier.")
+        st.error("Please enter a valid channel URL, ID, or username.")
     else:
-        # Resolve channel ID
         with st.spinner("Resolving Channel ID…"):
             mode, identifier = extract_channel_identifier(channel_input)
             channel_id = resolve_channel_id(api_key, mode, identifier)
 
         if not channel_id:
-            st.error("❌ Unable to resolve a valid Channel ID. Check your input.")
+            st.error("❌ Could not resolve a valid Channel ID. Check your input.")
         else:
-            # Fetch uploads playlist ID
             with st.spinner("Fetching Uploads Playlist…"):
                 uploads_pl_id = fetch_uploads_playlist_id(api_key, channel_id)
 
             if not uploads_pl_id:
-                st.error("❌ Could not find an uploads playlist for that channel.")
+                st.error("❌ Unable to find uploads playlist for this channel.")
             else:
-                # Fetch and filter videos
-                with st.spinner("Scanning for recent videos < 2 minutes…"):
+                with st.spinner("Scanning for recent videos under 2 minutes…"):
                     videos = fetch_videos_under_2_min(api_key, uploads_pl_id, max_results=40)
 
                 if not videos:
@@ -333,45 +316,25 @@ if fetch_button:
                 else:
                     st.success(f"Found {len(videos)} videos under 2 minutes.")
 
-                    # Display each video as a styled "card"
+                    # Build a Markdown table
+                    header = (
+                        "| Video Title | Views | Likes | Comments | Engagement Rate | Link |\n"
+                        "|:----------- | ----: | ----: | -------: | --------------: | :--- |\n"
+                    )
+                    rows = []
                     for vid in videos:
-                        # Start of card container
-                        st.markdown('<div class="video-card">', unsafe_allow_html=True)
+                        # Escape any pipe characters in title
+                        safe_title = vid["title"].replace("|", "\\|")
+                        views = f"{vid['viewCount']:,}"
+                        likes = f"{vid['likeCount']:,}"
+                        comments = f"{vid['commentCount']:,}"
+                        engagement = f"{vid['engagementRate']:.2f}%"
+                        url = f"https://www.youtube.com/watch?v={vid['videoId']}"
+                        title_md = f"[{safe_title}]({url})"
+                        link_md = f"[Watch]({url})"
 
-                        # Video title as a header
-                        st.markdown(f'<h3>🎥 {vid["title"]}</h3>', unsafe_allow_html=True)
+                        row = f"| {title_md} | {views} | {likes} | {comments} | {engagement} | {link_md} |"
+                        rows.append(row)
 
-                        # Layout: thumbnail + metrics side by side
-                        cols = st.columns([1, 1, 1, 1, 1, 1], gap="small")
-
-                        # Thumbnail
-                        with cols[0]:
-                            if vid["thumbnail_url"]:
-                                st.image(vid["thumbnail_url"], use_column_width=True, caption="")
-                            else:
-                                st.write("No thumbnail available")
-
-                        # Views
-                        with cols[1]:
-                            st.metric(label="👁️ Views", value=f"{vid['viewCount']:,}")
-
-                        # Likes
-                        with cols[2]:
-                            st.metric(label="👍 Likes", value=f"{vid['likeCount']:,}")
-
-                        # Comments
-                        with cols[3]:
-                            st.metric(label="💬 Comments", value=f"{vid['commentCount']:,}")
-
-                        # Engagement Rate (formatted to 2 decimals + “%”)
-                        with cols[4]:
-                            er_str = f"{vid['engagementRate']:.2f}%"
-                            st.metric(label="📈 Engagement Rate", value=er_str)
-
-                        # Watch Link
-                        with cols[5]:
-                            watch_url = f"https://www.youtube.com/watch?v={vid['videoId']}"
-                            st.markdown(f'<a href="{watch_url}" target="_blank">▶️ Watch Video</a>', unsafe_allow_html=True)
-
-                        # End of card container
-                        st.markdown('</div>', unsafe_allow_html=True)
+                    table_md = header + "\n".join(rows)
+                    st.markdown(f'<div class="scrollable-table">{table_md}</div>', unsafe_allow_html=True)
