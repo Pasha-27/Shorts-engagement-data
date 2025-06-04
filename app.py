@@ -330,5 +330,10 @@ if fetch_button:
                     st.success(f"Found {len(videos_data)} videos under 2 minutes.")
                     df = pd.DataFrame(videos_data)
 
+                    # Calculate and display average engagement rate
+                    eng_rates = [float(item["Engagement Rate"].strip("%")) for item in videos_data]
+                    avg_eng = sum(eng_rates) / len(eng_rates) if eng_rates else 0.0
+                    st.markdown(f"## **Average Engagement Rate: {avg_eng:.2f}%**")
+
                     # Display DataFrame as a clean table in the right column
                     st.dataframe(df, use_container_width=True, height=600)
