@@ -64,6 +64,32 @@ st.markdown(
     .stDataFrame td {
         color: #e0e0e0 !important;
     }
+    /* HTML table rendered via to_html */
+    .clickable-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    .clickable-table th, .clickable-table td {
+        border: 1px solid #333740;
+        padding: 8px;
+    }
+    .clickable-table th {
+        background-color: #1e2228;
+        color: #ffffff;
+        text-align: left;
+    }
+    .clickable-table td {
+        background-color: #1b1f23;
+        color: #e0e0e0;
+    }
+    .clickable-table a {
+        color: #1e90ff;
+        text-decoration: none;
+    }
+    .clickable-table a:hover {
+        text-decoration: underline;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -246,7 +272,7 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
                     "Comments": f"{comments:,}",
                     "Engagement Rate": f"{engagement:.2f}%",
                     "Upload Date": upload_date,
-                    "Video Link": link
+                    "Video Link": f'<a href="{link}" target="_blank">Watch</a>'
                 })
 
         next_token = data.get("nextPageToken")
@@ -335,5 +361,6 @@ if fetch_button:
                     avg_eng = sum(eng_rates) / len(eng_rates) if eng_rates else 0.0
                     st.markdown(f"## **Average Engagement Rate: {avg_eng:.2f}%**")
 
-                    # Display DataFrame as a clean table in the right column
-                    st.dataframe(df, use_container_width=True, height=600)
+                    # Convert DataFrame to HTML with clickable links and display
+                    html_table = df.to_html(escape=False, index=False, classes="clickable-table")
+                    st.write(html_table, unsafe_allow_html=True)
