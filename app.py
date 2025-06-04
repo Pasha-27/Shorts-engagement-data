@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import re
 import pandas as pd
+from datetime import datetime
 from urllib.parse import urlparse
 
 # --------------------------------------------------
@@ -25,12 +26,14 @@ st.markdown(
         background-color: #1b1f23;
         padding: 20px;
         border-radius: 10px;
+        height: 100%;
     }
     /* Input area styling */
     .input-panel {
         background-color: #1e2228;
         padding: 20px;
         border-radius: 10px;
+        margin-bottom: 20px;
     }
     /* Text input and button styling */
     .stTextInput > div > input {
@@ -173,7 +176,7 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
     Paginate through the uploads playlist, fetch video details in batches,
     filter by duration < 120 seconds, and collect up to max_results videos.
     Returns a list of dicts:
-      { "title", "viewCount", "likeCount", "commentCount", "engagementRate", "videoLink" }
+      { "Video Title", "Views", "Likes", "Comments", "Engagement Rate", "Upload Date", "Video Link" }
     """
     collected = []
     playlist_url = "https://www.googleapis.com/youtube/v3/playlistItems"
@@ -218,7 +221,15 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
 
             duration = parse_iso_duration_to_seconds(vid["contentDetails"]["duration"])
             if duration < 120:
-                title = vid["snippet"].get("title", "—")
+                snippet = vid["snippet"]
+                title = snippet.get("title", "—")
+                published_at = snippet.get("publishedAt", "")
+                # Convert ISO timestamp to YYYY-MM-DD
+                try:
+                    upload_date = datetime.fromisoformat(published_at.replace("Z", "+00:00")).date().isoformat()
+                except:
+                    upload_date = published_at[:10] if published_at else ""
+
                 stats = vid.get("statistics", {})
                 views = int(stats.get("viewCount", 0))
                 likes = int(stats.get("likeCount", 0))
@@ -234,6 +245,7 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
                     "Likes": f"{likes:,}",
                     "Comments": f"{comments:,}",
                     "Engagement Rate": f"{engagement:.2f}%",
+                    "Upload Date": upload_date,
                     "Video Link": link
                 })
 
@@ -245,10 +257,11 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
 
 
 # --------------------------------------------------
-# 3. Layout: Left Panel (Static Info) & Right Panel (Input)
+# 3. Layout: Left Panel (20%) & Right Panel (80%)
 # --------------------------------------------------
 
-left_col, right_col = st.columns([2, 1])
+# Create a two-column layout with 20% width for left, 80% for right
+left_col, right_col = st.columns([1, 4])
 
 with left_col:
     st.markdown('<div class="static-panel">', unsafe_allow_html=True)
@@ -256,12 +269,13 @@ with left_col:
     st.write("""
     • Enter a **YouTube Channel URL**, **Channel ID**, or **Username** on the right panel.  
     • Click **Fetch Videos** to retrieve up to 40 of the most recent videos under 2 minutes.  
-    • Results will be displayed below in a clean table with columns:  
+    • Results will be displayed in a table with columns:  
       – Video Title  
       – Views  
       – Likes  
       – Comments  
       – Engagement Rate (Likes + Comments) / Views  
+      – Upload Date  
       – Video Link  
     """)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -277,7 +291,7 @@ with right_col:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # --------------------------------------------------
-# 4. On Fetch: Resolve → Fetch → Display Table Below
+# 4. On Fetch: Resolve → Fetch → Display Table
 # --------------------------------------------------
 
 # Retrieve API key from secrets
@@ -316,5 +330,5 @@ if fetch_button:
                     st.success(f"Found {len(videos_data)} videos under 2 minutes.")
                     df = pd.DataFrame(videos_data)
 
-                    # Display DataFrame as a clean table
+                    # Display DataFrame as a clean table in the right column
                     st.dataframe(df, use_container_width=True, height=600)
