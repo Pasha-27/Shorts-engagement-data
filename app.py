@@ -1,7 +1,8 @@
 import streamlit as st
 import requests
 import re
-from urllib.parse import urlparse, parse_qs
+import pandas as pd
+from urllib.parse import urlparse
 
 # --------------------------------------------------
 # 1. Page Configuration & Dark Theme CSS Injection
@@ -11,74 +12,58 @@ st.set_page_config(
     layout="wide",
 )
 
-# Inject custom CSS for dark, modern styling
 st.markdown(
     """
     <style>
-    /* Main page background and text */
+    /* Overall background and text color */
     .stApp {
         background-color: #0f1115;
         color: #e0e0e0;
     }
-    /* Input containers (text_input, button) */
-    .stTextInput, .stButton {
-        background-color: #1e2228;
-        color: #e0e0e0;
-        border: 1px solid #333740;
-        border-radius: 5px;
-    }
-    /* Table styling */
-    .dataframe tbody tr th:only-of-type {
-        vertical-align: middle;
-    }
-    .dataframe tbody tr th {
-        vertical-align: top;
-    }
-    .dataframe thead th {
-        text-align: left;
-    }
-    /* Markdown table styling */
-    .markdown-table {
-        width: 100%;
-        border-collapse: collapse;
-    }
-    .markdown-table th,
-    .markdown-table td {
-        border: 1px solid #333740;
-        padding: 8px;
-    }
-    .markdown-table th {
-        background-color: #1e2228;
-        color: #ffffff;
-    }
-    .markdown-table td {
+    /* Left panel (static info) styling */
+    .static-panel {
         background-color: #1b1f23;
-        color: #e0e0e0;
+        padding: 20px;
+        border-radius: 10px;
     }
-    .markdown-table a {
-        color: #1e90ff;
-        text-decoration: none;
+    /* Input area styling */
+    .input-panel {
+        background-color: #1e2228;
+        padding: 20px;
+        border-radius: 10px;
     }
-    .markdown-table a:hover {
-        text-decoration: underline;
+    /* Text input and button styling */
+    .stTextInput > div > input {
+        background-color: #0f1115 !important;
+        color: #e0e0e0 !important;
+        border: 1px solid #333740 !important;
+        border-radius: 5px !important;
+    }
+    .stButton > button {
+        background-color: #e63946 !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 5px !important;
+        padding: 8px 16px !important;
+    }
+    .stButton > button:hover {
+        background-color: #d62839 !important;
+    }
+    /* DataFrame/table styling */
+    .stDataFrame {
+        background-color: #1b1f23 !important;
+        color: #e0e0e0 !important;
+    }
+    .stDataFrame th {
+        color: #ffffff !important;
+        background-color: #1e2228 !important;
+    }
+    .stDataFrame td {
+        color: #e0e0e0 !important;
     }
     </style>
     """,
     unsafe_allow_html=True
-)
-
-st.title("🎬 YouTube Channel: Recent Shorts (< 2 Minutes)")
-st.write(
-    """
-    Enter a **YouTube Channel URL**, **Channel ID**, or **Username** on the right, then click **Fetch**.  
-    The app will return up to 40 of the most recent videos under 2 minutes, displayed in a table with:
-    - Video Title (clickable)  
-    - Views  
-    - Likes  
-    - Comments  
-    - Engagement Rate (Likes + Comments) / Views  
-    - Link to Video  
-    """
 )
 
 # --------------------------------------------------
@@ -87,43 +72,37 @@ st.write(
 
 def extract_channel_identifier(url_or_id: str):
     """
-    Given a channel URL or raw identifier, determine:
-      - "id"       → Literal channel ID (starts with "UC")
+    Determine channel identifier mode:
+      - "id"       → literal channel ID (starts with "UC")
       - "username" → YouTube username (for /user/…)
-      - "custom"   → Custom URL handle (for /c/…)
-      - "raw"      → Neither; will attempt search
+      - "custom"   → custom URL handle (for /c/…)
+      - "raw"      → try as username then search
     Returns (mode, identifier).
     """
-    url_or_id = url_or_id.strip()
-    # If it matches channel ID pattern (starts with UC + 21 chars), treat as ID
-    if re.match(r"^UC[\w-]{21}$", url_or_id):
-        return ("id", url_or_id)
+    text = url_or_id.strip()
+    if re.match(r"^UC[\w-]{21}$", text):
+        return ("id", text)
 
-    # If full URL, parse path segments
-    if url_or_id.startswith("http://") or url_or_id.startswith("https://"):
-        parsed = urlparse(url_or_id)
+    if text.startswith(("http://", "https://")):
+        parsed = urlparse(text)
         parts = parsed.path.strip("/").split("/")
         if len(parts) >= 2:
             prefix, ident = parts[0].lower(), parts[1]
             if prefix == "channel":
                 return ("id", ident)
-            elif prefix == "user":
+            if prefix == "user":
                 return ("username", ident)
-            elif prefix == "c":
+            if prefix == "c":
                 return ("custom", ident)
-        # Fallback: last segment as custom/username
         fallback = parts[-1]
         if fallback:
             if fallback.startswith("UC") and re.match(r"^UC[\w-]{21}$", fallback):
                 return ("id", fallback)
             return ("custom", fallback)
 
-    # If raw string: if matches channel ID pattern, treat as ID
-    if url_or_id.startswith("UC") and re.match(r"^UC[\w-]{21}$", url_or_id):
-        return ("id", url_or_id)
-
-    # Otherwise treat as raw (will attempt both username & search)
-    return ("raw", url_or_id)
+    if text.startswith("UC") and re.match(r"^UC[\w-]{21}$", text):
+        return ("id", text)
+    return ("raw", text)
 
 
 def parse_iso_duration_to_seconds(duration_iso: str) -> int:
@@ -133,20 +112,19 @@ def parse_iso_duration_to_seconds(duration_iso: str) -> int:
     match = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration_iso)
     if not match:
         return 0
-    hours = int(match.group(1)) if match.group(1) else 0
-    minutes = int(match.group(2)) if match.group(2) else 0
-    seconds = int(match.group(3)) if match.group(3) else 0
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
     return hours * 3600 + minutes * 60 + seconds
 
 
 def resolve_channel_id(api_key: str, mode: str, identifier: str) -> str:
     """
-    Resolve a literal channel ID ("UC…") from:
+    Resolve to a literal channel ID ("UC…") using:
       - mode == "id"       → return as-is
-      - mode == "username" → call channels?forUsername=…
-      - mode == "custom"   → search channels?q=…
+      - mode == "username" → channels?forUsername=…
+      - mode == "custom"   → search?q=…
       - mode == "raw"      → try username, else search
-    Returns channel ID or None.
     """
     base = "https://www.googleapis.com/youtube/v3"
 
@@ -155,20 +133,21 @@ def resolve_channel_id(api_key: str, mode: str, identifier: str) -> str:
 
     if mode == "username":
         url = f"{base}/channels?part=id&forUsername={identifier}&key={api_key}"
-        r = requests.get(url)
-        if r.status_code == 200:
-            items = r.json().get("items", [])
+        resp = requests.get(url)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
             if items:
                 return items[0]["id"]
-        mode = "custom"  # Fall back to search
+        mode = "custom"
 
     if mode in ("custom", "raw"):
         url = f"{base}/search?part=snippet&type=channel&q={identifier}&maxResults=1&key={api_key}"
-        r = requests.get(url)
-        if r.status_code == 200:
-            items = r.json().get("items", [])
+        resp = requests.get(url)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
             if items:
                 return items[0]["snippet"]["channelId"]
+
     return None
 
 
@@ -180,10 +159,10 @@ def fetch_uploads_playlist_id(api_key: str, channel_id: str) -> str:
         f"https://www.googleapis.com/youtube/v3/channels"
         f"?part=contentDetails&id={channel_id}&key={api_key}"
     )
-    r = requests.get(url)
-    if r.status_code != 200:
+    resp = requests.get(url)
+    if resp.status_code != 200:
         return None
-    items = r.json().get("items", [])
+    items = resp.json().get("items", [])
     if not items:
         return None
     return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
@@ -191,10 +170,10 @@ def fetch_uploads_playlist_id(api_key: str, channel_id: str) -> str:
 
 def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results: int = 40):
     """
-    Paginate through the uploads playlist, fetch video details in batches, filter
-    by duration < 120 seconds, until we collect up to max_results videos.
+    Paginate through the uploads playlist, fetch video details in batches,
+    filter by duration < 120 seconds, and collect up to max_results videos.
     Returns a list of dicts:
-      { videoId, title, viewCount, likeCount, commentCount, engagementRate }
+      { "title", "viewCount", "likeCount", "commentCount", "engagementRate", "videoLink" }
     """
     collected = []
     playlist_url = "https://www.googleapis.com/youtube/v3/playlistItems"
@@ -211,10 +190,10 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
         if next_token:
             params["pageToken"] = next_token
 
-        r = requests.get(playlist_url, params=params)
-        if r.status_code != 200:
+        resp = requests.get(playlist_url, params=params)
+        if resp.status_code != 200:
             break
-        data = r.json()
+        data = resp.json()
         items = data.get("items", [])
         if not items:
             break
@@ -228,34 +207,34 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
             "id": ",".join(batch_ids),
             "key": api_key
         }
-        rv = requests.get(videos_url, params=vid_params)
-        if rv.status_code != 200:
+        vid_resp = requests.get(videos_url, params=vid_params)
+        if vid_resp.status_code != 200:
             break
-        vdata = rv.json().get("items", [])
+        vdata = vid_resp.json().get("items", [])
 
         for vid in vdata:
             if len(collected) >= max_results:
                 break
-            dur_sec = parse_iso_duration_to_seconds(vid["contentDetails"]["duration"])
-            if dur_sec < 120:
-                snippet = vid["snippet"]
+
+            duration = parse_iso_duration_to_seconds(vid["contentDetails"]["duration"])
+            if duration < 120:
+                title = vid["snippet"].get("title", "—")
                 stats = vid.get("statistics", {})
-                view_count = int(stats.get("viewCount", 0))
-                like_count = int(stats.get("likeCount", 0))
-                comment_count = int(stats.get("commentCount", 0))
+                views = int(stats.get("viewCount", 0))
+                likes = int(stats.get("likeCount", 0))
+                comments = int(stats.get("commentCount", 0))
+                engagement = 0.0
+                if views > 0:
+                    engagement = (likes + comments) / views * 100
 
-                # Compute engagement rate: (likes + comments) / views * 100
-                engagement_rate = 0.0
-                if view_count > 0:
-                    engagement_rate = (like_count + comment_count) / view_count * 100
-
+                link = f"https://www.youtube.com/watch?v={vid['id']}"
                 collected.append({
-                    "videoId": vid["id"],
-                    "title": snippet.get("title", "—"),
-                    "viewCount": view_count,
-                    "likeCount": like_count,
-                    "commentCount": comment_count,
-                    "engagementRate": engagement_rate,
+                    "Video Title": title,
+                    "Views": f"{views:,}",
+                    "Likes": f"{likes:,}",
+                    "Comments": f"{comments:,}",
+                    "Engagement Rate": f"{engagement:.2f}%",
+                    "Video Link": link
                 })
 
         next_token = data.get("nextPageToken")
@@ -266,34 +245,54 @@ def fetch_videos_under_2_min(api_key: str, uploads_playlist_id: str, max_results
 
 
 # --------------------------------------------------
-# 3. Input: Channel URL Field & Fetch Button (Top-Right)
+# 3. Layout: Left Panel (Static Info) & Right Panel (Input)
 # --------------------------------------------------
-# Create two columns: left blank, right contains inputs
-col_left, col_right = st.columns([3, 1])
 
-with col_right:
+left_col, right_col = st.columns([2, 1])
+
+with left_col:
+    st.markdown('<div class="static-panel">', unsafe_allow_html=True)
+    st.header("📋 App Description")
+    st.write("""
+    • Enter a **YouTube Channel URL**, **Channel ID**, or **Username** on the right panel.  
+    • Click **Fetch Videos** to retrieve up to 40 of the most recent videos under 2 minutes.  
+    • Results will be displayed below in a clean table with columns:  
+      – Video Title  
+      – Views  
+      – Likes  
+      – Comments  
+      – Engagement Rate (Likes + Comments) / Views  
+      – Video Link  
+    """)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with right_col:
+    st.markdown('<div class="input-panel">', unsafe_allow_html=True)
+    st.header("🔍 Find Shorts")
     channel_input = st.text_input(
         label="Channel URL / ID / Username",
         placeholder="e.g. https://www.youtube.com/c/ChannelName"
     )
-    fetch_button = st.button("Fetch Videos")
+    fetch_button = st.button("Fetch Videos", use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Retrieve API key from Streamlit secrets
+# --------------------------------------------------
+# 4. On Fetch: Resolve → Fetch → Display Table Below
+# --------------------------------------------------
+
+# Retrieve API key from secrets
 try:
     api_key = st.secrets["youtube_api_key"].strip()
 except KeyError:
     api_key = None
 
 if not api_key:
-    st.error("🔒 Add `youtube_api_key` to Streamlit secrets and rerun.")
+    st.error("🔒 Missing `youtube_api_key` in Streamlit secrets. Add it and rerun.")
     st.stop()
 
-# --------------------------------------------------
-# 4. On Fetch: Resolve + Fetch + Display Table
-# --------------------------------------------------
 if fetch_button:
     if not channel_input.strip():
-        st.error("Please enter a valid channel URL, ID, or username.")
+        st.error("Please enter a channel URL, ID, or username.")
     else:
         with st.spinner("Resolving Channel ID…"):
             mode, identifier = extract_channel_identifier(channel_input)
@@ -303,38 +302,19 @@ if fetch_button:
             st.error("❌ Could not resolve a valid Channel ID. Check your input.")
         else:
             with st.spinner("Fetching Uploads Playlist…"):
-                uploads_pl_id = fetch_uploads_playlist_id(api_key, channel_id)
+                uploads_playlist_id = fetch_uploads_playlist_id(api_key, channel_id)
 
-            if not uploads_pl_id:
+            if not uploads_playlist_id:
                 st.error("❌ Unable to find uploads playlist for this channel.")
             else:
                 with st.spinner("Scanning for recent videos under 2 minutes…"):
-                    videos = fetch_videos_under_2_min(api_key, uploads_pl_id, max_results=40)
+                    videos_data = fetch_videos_under_2_min(api_key, uploads_playlist_id, max_results=40)
 
-                if not videos:
+                if not videos_data:
                     st.warning("No videos under 2 minutes found for this channel.")
                 else:
-                    st.success(f"Found {len(videos)} videos under 2 minutes.")
+                    st.success(f"Found {len(videos_data)} videos under 2 minutes.")
+                    df = pd.DataFrame(videos_data)
 
-                    # Build a Markdown table
-                    header = (
-                        "| Video Title | Views | Likes | Comments | Engagement Rate | Link |\n"
-                        "|:----------- | ----: | ----: | -------: | --------------: | :--- |\n"
-                    )
-                    rows = []
-                    for vid in videos:
-                        # Escape any pipe characters in title
-                        safe_title = vid["title"].replace("|", "\\|")
-                        views = f"{vid['viewCount']:,}"
-                        likes = f"{vid['likeCount']:,}"
-                        comments = f"{vid['commentCount']:,}"
-                        engagement = f"{vid['engagementRate']:.2f}%"
-                        url = f"https://www.youtube.com/watch?v={vid['videoId']}"
-                        title_md = f"[{safe_title}]({url})"
-                        link_md = f"[Watch]({url})"
-
-                        row = f"| {title_md} | {views} | {likes} | {comments} | {engagement} | {link_md} |"
-                        rows.append(row)
-
-                    table_md = header + "\n".join(rows)
-                    st.markdown(f'<div class="scrollable-table">{table_md}</div>', unsafe_allow_html=True)
+                    # Display DataFrame as a clean table
+                    st.dataframe(df, use_container_width=True, height=600)
